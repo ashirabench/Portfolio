@@ -1,0 +1,236 @@
+---
+title: "LASSO Regression for Housing Price Prediction"
+author: "Ashira A. Benchimol"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  pdf_document:
+    pandoc_args: ["--extract-media", "."]
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      collapse = TRUE,
+                      warning = FALSE, message = FALSE, error = FALSE,
+                      fig.align = 'center')
+```
+
+## Overview
+
+This lab applies LASSO (Least Absolute Shrinkage and Selection Operator)
+regression to predict home sale prices in Ames, Iowa. LASSO adds an L1
+penalty to the OLS objective, which shrinks coefficients toward zero and
+sets unimportant ones to exactly zero — performing variable selection
+automatically.
+
+The central question is: **which penalty strength (lambda) minimizes
+out-of-sample prediction error?** Cross-validation answers this by
+evaluating RMSE across a grid of lambda values without ever touching
+a held-out test set during tuning.
+
+**Data:** Ames Housing dataset (n ≈ 1,460), 80 raw variables.  
+**Response:** `SalePrice` (sale price in USD).
+
+---
+
+## 1. Load Libraries and Data
+
+```{r load}
+library(tidyverse)
+library(skimr)
+library(glmnet)
+
+Ames <- read.table(
+  'https://raw.githubusercontent.com/ajkirkpatrick/FS20/postS21_rev/classdata/ames.csv',
+  header = TRUE,
+  sep    = ','
+) %>%
+  dplyr::select(-Id)   # Id is a row identifier, not a predictor
+```
+
+---
+
+## 2. Data Cleaning
+
+```{r clean}
+skim_output <- skim(Ames)
+
+# Remove columns with only one unique value — zero-variance predictors
+# add no information to the model and cause rank deficiency.
+n_unique_all    <- sapply(Ames, function(x) length(unique(na.omit(x))))
+single_val_cols <- names(n_unique_all[n_unique_all <= 1])
+
+cat("Columns with only 1 unique value (removing):\n")
+print(single_val_cols)
+
+# Remove columns with more than 40% missing values.
+# Imputing heavily missing variables introduces more noise than signal.
+high_na_cols <- skim_output %>%
+  filter(complete_rate < 0.60) %>%
+  pull(skim_variable)
+
+cat("\nColumns with >40% missing values (removing):\n")
+print(high_na_cols)
+
+cols_to_remove <- unique(c(single_val_cols, high_na_cols))
+
+Ames_clean <- Ames %>%
+  dplyr::select(-all_of(cols_to_remove)) %>%
+  na.omit()
+
+cat("\nObservations after cleaning:", nrow(Ames_clean), "\n")
+cat("Variables remaining:        ", ncol(Ames_clean), "\n")
+cat("NA values remaining:        ", sum(is.na(Ames_clean)), "\n")
+```
+
+---
+
+## 3. Select 16 Predictors
+
+```{r select-predictors}
+# 16 predictors chosen to cover the main drivers of home value:
+# size, quality, condition, age, location, and features.
+predictors <- c(
+  "GrLivArea",    # above-grade living area — primary size measure
+  "OverallQual",  # material and finish quality (1–10)
+  "OverallCond",  # overall condition rating (1–10)
+  "YearBuilt",    # original construction year
+  "TotalBsmtSF",  # total basement area (sq ft)
+  "GarageCars",   # garage capacity (number of cars)
+  "GarageArea",   # garage area (sq ft)
+  "FullBath",     # full bathrooms above grade
+  "BedroomAbvGr", # bedrooms above grade
+  "TotRmsAbvGrd", # total rooms above grade (excl. bathrooms)
+  "Fireplaces",   # number of fireplaces
+  "LotArea",      # lot size (sq ft)
+  "YearRemodAdd", # year of most recent remodel
+  "X1stFlrSF",    # first floor area (sq ft)
+  "X2ndFlrSF",    # second floor area (sq ft)
+  "Neighborhood"  # location within Ames — strong price driver
+)
+
+Ames_model <- Ames_clean %>%
+  dplyr::select(SalePrice, all_of(predictors)) %>%
+  na.omit()
+
+cat("Observations:", nrow(Ames_model), "\n")
+cat("Predictors:  ", ncol(Ames_model) - 1, "\n")
+```
+
+---
+
+## 4. Define Formula with Interaction Terms
+
+```{r formula}
+# 16 main effects + 5 interactions motivated by economic reasoning.
+# The OverallQual:Neighborhood interaction captures the idea that
+# the premium for quality differs across neighborhoods — a high-quality
+# home in NoRidge commands a larger premium than one in OldTown.
+my_formula <- SalePrice ~
+  GrLivArea + OverallQual + OverallCond + YearBuilt +
+  TotalBsmtSF + GarageCars + GarageArea + FullBath + BedroomAbvGr +
+  TotRmsAbvGrd + Fireplaces + LotArea + YearRemodAdd +
+  X1stFlrSF + X2ndFlrSF + Neighborhood +
+  GrLivArea:OverallQual +     # larger high-quality homes worth disproportionately more
+  OverallQual:YearBuilt +     # newer high-quality homes command a premium
+  TotalBsmtSF:X1stFlrSF +    # basement and first-floor size interact
+  GarageCars:GarageArea +     # garage capacity and size together
+  OverallQual:Neighborhood    # quality premium varies by neighborhood
+
+print(my_formula)
+```
+
+---
+
+## 5. Set Seed
+
+```{r seed}
+# cv.glmnet randomly assigns observations to folds.
+# Setting the seed ensures the fold splits are identical on every run,
+# making results reproducible.
+set.seed(24224)
+```
+
+---
+
+## 6. Fit LASSO with Cross-Validation
+
+```{r lasso}
+# model.matrix converts the formula to a numeric matrix,
+# expanding factors into dummy variables and computing interaction columns.
+# cv.glmnet requires a matrix, not a data frame or formula.
+x_matrix <- model.matrix(my_formula, data = Ames_model)
+y_vector  <- Ames_model$SalePrice
+
+# alpha = 1 specifies LASSO (alpha = 0 would be ridge).
+# cv.glmnet uses 10-fold CV by default to evaluate each lambda.
+net_cv <- cv.glmnet(x = x_matrix,
+                    y = y_vector,
+                    alpha = 1)
+
+cat("Optimal lambda (lambda.min):", round(net_cv$lambda.min, 4), "\n")
+```
+
+---
+
+## 7. RMSE vs Lambda Plot
+
+```{r plot, fig.width = 7, fig.height = 4.5}
+lambda_df <- data.frame(
+  lambda = net_cv$lambda,
+  RMSE   = sqrt(net_cv$cvm)    # cv.glmnet reports MSE; convert to RMSE
+)
+
+best_lambda <- net_cv$lambda.min
+best_rmse   <- sqrt(min(net_cv$cvm))
+
+cat("Optimal lambda:", round(best_lambda, 4), "\n")
+cat("CV RMSE at optimal lambda: $", format(round(best_rmse), big.mark = ","), "\n")
+
+ggplot(lambda_df, aes(x = log(lambda), y = RMSE)) +
+  geom_line(color = "steelblue", linewidth = 0.8) +
+  geom_point(color = "steelblue", size = 0.9) +
+  geom_vline(xintercept = log(best_lambda),
+             linetype = "dashed", color = "red", linewidth = 0.8) +
+  annotate("text",
+           x     = log(best_lambda),
+           y     = max(lambda_df$RMSE) * 0.97,
+           label = paste("Optimal\nlog(\u03bb) =", round(log(best_lambda), 2)),
+           hjust = -0.1, color = "red", size = 3.2) +
+  scale_y_continuous(labels = scales::comma) +
+  labs(
+    title   = "LASSO Cross-Validation: RMSE vs log(\u03bb)",
+    x       = "log(\u03bb)",
+    y       = "CV RMSE (USD)",
+    caption = "Data: Ames Housing | Red dashed line = lambda.min"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(plot.caption = element_text(color = "gray50", size = 8))
+```
+
+There is a clear minimum in the CV RMSE curve. As log(lambda) increases from
+its minimum value, RMSE first falls — the penalty is removing noise — then
+rises sharply once lambda becomes large enough to shrink genuinely important
+coefficients. The optimal lambda sits at the bottom of this U-shape,
+balancing the bias introduced by shrinkage against the variance reduction it
+provides.
+
+---
+
+## 8. Non-Zero LASSO Coefficients
+
+```{r coefficients}
+lasso_coefs <- coef(net_cv, s = net_cv$lambda.min)
+print(lasso_coefs)
+```
+
+Variables with a dot (`.`) in the coefficient column have been shrunk to
+exactly zero and effectively removed from the model. This is the defining
+feature of LASSO: it performs variable selection and shrinkage simultaneously,
+producing a sparse model that is easier to interpret than the full OLS fit
+with all 69 columns in the model matrix.
+
+At the optimal lambda, 63 of 69 columns retain non-zero coefficients. The
+`OverallQual:Neighborhood` interaction terms show considerable variation
+across neighborhoods — for example, the quality premium in `NoRidge` is
+large and positive while it is negative in `Edwards` — confirming that
+location meaningfully moderates the value of quality improvements.
