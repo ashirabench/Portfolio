@@ -1,5 +1,5 @@
 # Portfolio
-Portfolio de codigos: SQL, R. Python, C#, C++, e outros
+Code portfolio: SQL, R, Python, C#, C++, and others
 
 ## Projects
 
