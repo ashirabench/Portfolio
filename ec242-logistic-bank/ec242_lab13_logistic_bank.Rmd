@@ -1,0 +1,203 @@
+---
+title: "Logistic Regression for Bank Subscription Prediction"
+author: "Ashira A. Benchimol"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  pdf_document:
+    pandoc_args: ["--extract-media", "."]
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      collapse = TRUE,
+                      warning = FALSE, message = FALSE, error = FALSE,
+                      fig.align = 'center')
+```
+
+## Overview
+
+This lab fits a series of logistic regression models to predict whether a
+bank client subscribed to a term deposit following a phone marketing
+campaign. The dataset is heavily imbalanced — roughly 89% of clients did
+not subscribe — which makes accuracy alone a misleading metric. Sensitivity
+(the fraction of actual subscribers correctly identified) and specificity
+(the fraction of non-subscribers correctly identified) are more informative
+and are tracked across all models.
+
+Four models are compared, each adding predictors or an interaction term.
+The goal is to evaluate whether additional predictors improve classification
+beyond what `duration` alone provides.
+
+**Data:** Portuguese bank marketing dataset (n = 4,521).  
+**Response:** `y` — whether the client subscribed (yes = 1, no = 0).
+
+---
+
+## 1. Load Data and Prepare Response Variable
+
+```{r load}
+library(tidyverse)
+library(caret)
+
+# Load the bank dataset; drop the separate 'default' column
+bank <- read.table("https://ec242.netlify.app/data/bank.csv",
+                   header = TRUE,
+                   sep    = ",") %>%
+  dplyr::select(-default)
+
+# Convert the character response to a binary integer (1 = subscribed, 0 = not)
+bank <- bank %>%
+  dplyr::mutate(y = case_when(
+    y == "yes" ~ as.integer(1),
+    y == "no"  ~ as.integer(0)
+  ))
+
+cat("Subscription class distribution:\n")
+print(table(bank$y))
+cat(sprintf("Subscription rate: %.1f%%\n", mean(bank$y) * 100))
+```
+
+The subscription rate is approximately 11.5%, confirming heavy class
+imbalance. A naive classifier that always predicts "no" would achieve
+~88.5% accuracy without learning anything — so accuracy alone is not
+sufficient to evaluate these models.
+
+---
+
+## 2. Check for Missing Values
+
+```{r missing}
+cat("Total NA values:", sum(is.na(bank)), "\n")
+bank <- na.omit(bank)
+cat("Observations after NA removal:", nrow(bank), "\n")
+```
+
+---
+
+## 3. Train / Test Split (80/20)
+
+```{r split}
+set.seed(24224)
+
+num_obs     <- nrow(bank)
+train_index <- sample(num_obs, size = trunc(0.80 * num_obs))
+
+train_data <- bank[train_index, ]
+test_data  <- bank[-train_index, ]
+
+cat("Training observations:", nrow(train_data), "\n")
+cat("Test observations:    ", nrow(test_data),  "\n")
+```
+
+---
+
+## 4. Fit Four Logistic Regression Models
+
+Models are built cumulatively, adding predictors in order of expected
+predictive value based on domain knowledge about phone marketing campaigns.
+
+```{r models}
+# Model 1: duration only
+# Call duration is the strongest single predictor — a longer call
+# suggests a client engaged seriously with the offer.
+model_1 <- glm(y ~ duration,
+               data = train_data, family = "binomial")
+
+# Model 2: add account balance
+# Clients with higher balances may be more receptive to savings products.
+model_2 <- glm(y ~ duration + balance,
+               data = train_data, family = "binomial")
+
+# Model 3: add age
+# Age may proxy for life stage and financial priorities.
+model_3 <- glm(y ~ duration + balance + age,
+               data = train_data, family = "binomial")
+
+# Model 4: add campaign contacts and a duration:balance interaction
+# More contacts in a campaign may indicate follow-up on interested clients.
+# The interaction allows the effect of call duration to vary with balance.
+model_4 <- glm(y ~ duration + balance + age + campaign + duration:balance,
+               data = train_data, family = "binomial")
+```
+
+---
+
+## 5. Evaluate on Training and Test Data
+
+```{r evaluate}
+# Predict class labels from estimated probabilities using a 0.5 threshold.
+get_logistic_pred <- function(mod, data, pos = 1, neg = 0, cut = 0.5) {
+  probs <- predict(mod, newdata = data, type = "response")
+  ifelse(probs > cut, pos, neg)
+}
+
+models      <- list(model_1, model_2, model_3, model_4)
+model_names <- paste0("Model ", 1:4)
+
+# Compute confusion matrices for all four models on both datasets
+train_cms <- lapply(models, function(m) {
+  preds <- get_logistic_pred(m, data = train_data)
+  tab   <- table(predicted = preds, actual = train_data$y)
+  confusionMatrix(tab, positive = "1")
+})
+
+test_cms <- lapply(models, function(m) {
+  preds <- get_logistic_pred(m, data = test_data)
+  tab   <- table(predicted = preds, actual = test_data$y)
+  confusionMatrix(tab, positive = "1")
+})
+
+# Print each test confusion matrix
+for (i in seq_along(models)) {
+  cat(sprintf("\n--- %s | TEST ---\n", model_names[i]))
+  print(test_cms[[i]])
+}
+```
+
+---
+
+## 6. Summary Table
+
+```{r summary-table}
+results <- data.frame(
+  Model             = model_names,
+  Train_Accuracy    = sapply(train_cms, function(cm) cm$overall["Accuracy"]),
+  Test_Accuracy     = sapply(test_cms,  function(cm) cm$overall["Accuracy"]),
+  Train_Sensitivity = sapply(train_cms, function(cm) cm$byClass["Sensitivity"]),
+  Test_Sensitivity  = sapply(test_cms,  function(cm) cm$byClass["Sensitivity"]),
+  Train_Specificity = sapply(train_cms, function(cm) cm$byClass["Specificity"]),
+  Test_Specificity  = sapply(test_cms,  function(cm) cm$byClass["Specificity"])
+)
+
+print(round(results, 4), row.names = FALSE)
+```
+
+---
+
+## 7. Interpretation
+
+Accuracy is stable at approximately 88–89% across all four models. This is
+largely explained by the class imbalance: a model that predicts "no
+subscription" for every observation would achieve ~88.5% accuracy, so high
+accuracy here does not indicate strong performance.
+
+Sensitivity — the fraction of actual subscribers correctly identified — is
+the more important metric for a bank trying to target potential customers.
+It sits around 14–15% across models, meaning the models miss the large
+majority of subscribers. This is a natural consequence of the 0.5 threshold
+combined with heavy imbalance: the model assigns most observations a
+predicted probability below 0.5, defaulting to "no."
+
+Specificity is very high (~98–99%), reflecting that the models are
+conservative — they rarely predict a subscription that does not occur.
+
+Adding predictors beyond `duration` provides only marginal improvement,
+suggesting `duration` captures most of the available signal in this dataset.
+Train and test metrics are nearly identical across all models, indicating
+no meaningful overfitting.
+
+A practical next step would be to lower the classification threshold from
+0.5 to something like 0.2 or 0.3. This would increase sensitivity at the
+cost of specificity — a worthwhile tradeoff in a marketing context where
+the cost of missing a potential subscriber is high relative to the cost of
+an unnecessary call.
