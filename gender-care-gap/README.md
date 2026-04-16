@@ -2,7 +2,7 @@
 
 Do higher state unionization rates affect the male-female gap in unpaid care minutes? Does it differ by household structure?
 
-We merged individual-level American Time Use Survey (ATUS) data with state-level union membership rates, built a gender care gap measure, and tested whether unionization moderates the gap. It doesn't — but family structure and education do.
+We merged individual-level American Time Use Survey (ATUS) data with state-level union membership rates, built a gender care gap measure, and tested whether unionization moderates the gap. It doesn't, but family structure and education do.
 
 **Course:** EC 422 . Michigan State University
 **Authors:** Ashira Benchimol, Amiera Saanan, Lillian Davidson
