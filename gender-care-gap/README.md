@@ -17,7 +17,7 @@ We merged individual-level American Time Use Survey (ATUS) data with state-level
 ## A Note on Housewives
 
 One of the most interesting things we found: housewives spend nearly double the care time of other women (~290 vs ~165 min/day). 
-They pull the female average up significantly. This raises a question worth thinking about — is the "gender care gap" really a gender gap, or is it partly a labor force participation gap? 
+They pull the female average up significantly. This raises a question worth thinking about: is the "gender care gap" really a gender gap, or is it partly a labor force participation gap? 
 If you removed housewives from the sample, the 73-minute gap would shrink. 
 The gap is still real, but the size of it depends on who you include and why. We think that's worth questioning.
 
