@@ -1,5 +1,5 @@
 # Portfolio
-Code portfolio: SQL, R, Python, C#, C++, and others
+Code portfolio
 
 ## Projects
 - [UFC Decision Analysis](./ufc-decision-analysis) — Modeling UFC fight outcomes and flagging controversial decisions. EC 423 at MSU.
